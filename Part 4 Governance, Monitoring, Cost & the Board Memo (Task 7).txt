@@ -1,0 +1,57 @@
+MEMORANDUM
+
+To: CFO
+
+From: Analytics
+
+Date: 06 September 2026
+
+Re: Customer churn, where to spend retention money first, and the AI explanation tool
+
+Headline finding
+
+26.5% of our customers left us (1,869 out of 7,043). Churn is concentrated in month-to-month customers (42.7% of them left, against 2.8% on two-year contracts) and in fibre optic users (41.9%).
+
+Which segment to target first
+
+I split the customer base into 4 groups using tenure, monthly spend and the churn probability from the model. The group to fund first is the new, high-spend, high-risk one: 1,896 customers, average bill $83.29/month, average churn probability 0.60 (and they really are leaving, 59% of this group churned in the data). This group carries about $94,700 per month of revenue at risk, roughly 70% of all the revenue at risk in the base. The trade-off I weighed: the two loyal groups hold more money in total but their risk is low (0.03 and 0.13), so most of a campaign there would pay discounts to people who were staying anyway. The new low-spend starters are shaky too (0.23) but at $37/month each they only have $16,100/month at risk. The same budget protects about 6x more revenue in the high-spend group.
+
+Monitoring after launch
+
+One number, checked weekly: the share of month-to-month fibre customers scoring above 0.70 risk. It is 20.8% today (2,128 customers). If a competitor runs a fibre promotion or we change fibre pricing this moves within days, long before overall accuracy drops. If it stays above ~25% for a couple of weeks, the model needs retraining.
+
+Governance
+
+The explanation tool never sends a customer's full record to the LLM, only a short list of approved fields (risk score, tenure, top 3 model reasons, contract type, monthly charge). Before every call the code scans the prompt and blocks it if any demographic word appears (gender, senior, partner, dependents, family etc). Every call is logged with the fields sent and the final text, so an auditor can check the logs and confirm the non-discrimination rule held for every explanation, not just the demo one.
+
+Cost
+
+Right now 2,113 customers (30% of the base) fall in the two at-risk tiers, so explaining all of them weekly would be around 110,000 LLM calls a year. The fix: the clause and the action are already chosen by our code, not by the LLM, so we can safely reuse explanations for customers who share the same clause, same top 3 reasons and a similar tenure band, and only generate the unique ones (a few hundred a week at most) on a cheaper model. The citation guarantee does not break because the clause text never comes from the LLM.
+
+Recommendation: approve the retention campaign for the new high-spend high-risk segment, with the weekly monitoring number and the prompt logging described above.
+
+Analyst notes (my working notes, more detail than the memo)
+
+1. The TotalCharges fix
+
+TotalCharges came in as a text column because 11 rows were blank. I checked all 11 and every one has tenure = 0, so they are brand new customers whose first bill has not been generated yet. I dropped the rows instead of filling in an average, because putting an average billing history on a brand new customer seemed wrong, and 11 rows out of 7,043 (0.15%) will not change any result.
+
+2. Train vs test accuracy
+
+Logistic regression: 80.5% on train, 80.4% on test, basically no gap. Random forest with default settings: 99.9% on train but only 78.8% on test, it just memorised the training data and I would not defend its predictions to anyone. Limiting the tree depth fixed most of the gap (80.4% train / 78.8% test) with the same AUC. I still shipped the logistic regression: AUC is basically tied with the tuned forest (0.836 vs 0.839) and its recall at the normal cutoff is much better (0.57 vs 0.44), which matters more for a flagging tool, and it is easier to explain in a board meeting.
+
+3. Why I picked that segment (the trade-off)
+
+It is not just the highest risk number. Risk alone would point at the new high-spend group anyway (0.60 average probability), but the reason it beats the others is risk times money. It has 1,896 customers at $83.29 average, so about $94,700/month of expected lost revenue, against $16,100 for the new low-spend starters (risk 0.23 but small bills) and $24,200 for the established premium group (big bills but risk only 0.13, they mostly stay). The settled low-spend group is not worth touching ($1,300 at risk). So the high-spend new group has both a real problem and the money, that is why it goes first.
+
+4. What happened when I skipped retrieval
+
+For the demo customer (1374-DMZUI, risk 0.85, tenure 4 months, so the correct clause is Clause 1) I asked the LLM which clause applies but did NOT give it the playbook. It answered Clause 2, and even described what Clause 2 says to do, with complete confidence. It did not say it was not sure. That failure mode is hallucination: it made up a citation and dressed it as policy. In a casual chatbot a wrong answer is just embarrassing. Here an agent would have followed it and sent an upgrade email to a customer who should get a loyalty discount and a 48 hour callback, and the wrong advice would sit in the customer record looking official, which is a compliance problem, not just a wrong answer. This is why my flow always retrieves the clause with if/else code first and only lets the LLM write the wording around it.
+
+5. Exactly what I passed into the LLM prompt
+
+The prompt contained: the retrieved clause text, the churn probability, tenure in months, the top 3 risk factors for that customer, the contract type and the monthly charge. Nothing else, the full customer row never goes in. In the code: in 06_advisor.py I build the facts dictionary by hand with only those fields, and I drop the 4 demographic columns (gender, SeniorCitizen, Partner, Dependents) before the top factors are calculated, so they cannot even be selected as reasons. In llm_client.py the check_prompt() function scans the final prompt for demographic words and throws an error before any API call. The model itself was trained with the demographic columns included (their coefficients are small: gender 0.02, partner -0.03, senior 0.19, dependents -0.23), but nothing demographic can reach the LLM or the explanation text. The streamlit app also does not ask for those fields at all.
+
+How to run
+
+Scripts 01 to 07 in order from the project folder, e.g. PYTHONPATH=src python3 src/01_eda.py. The LLM parts need GEMINI_API_KEY set in the environment (google ai studio key), without a key they print a labelled mock so everything still runs. App: streamlit run app/app.py.
